@@ -62,65 +62,56 @@ def get_completion(inputs, parameters=None, ENDPOINT_URL=API_URL):
 def merge_tokens(tokens):
     merged_tokens = []
     for token in tokens:
-        # Extract entity type without prefix
-        ent_type = token['entity'].replace("B-", "").replace("I-", "")
-        
-        # Check if this token continues the previous entity
-        if (merged_tokens and 
-            token['entity'].startswith("I-") and 
-            merged_tokens[-1]['entity_type'] == ent_type):
-            # Merge with previous token
-            last = merged_tokens[-1]
-            word = token['word']
-            # Handle subword tokens
-            if word.startswith("##"):
-                last['word'] += word[2:]
-            else:
-                # Add space before non-subword continuations
-                last['word'] += " " + word
-            last['end'] = token['end']
-            last['score'] = (last['score'] + token['score']) / 2
+        if merged_tokens and token['entity'].startswith('I-') and merged_tokens[-1]['entity'].endswith(token['entity'][2:]):
+            # If current token continues the entity of the last one, merge them
+            last_token = merged_tokens[-1]
+            last_token['word'] += token['word'].replace('##', '')
+            last_token['end'] = token['end']
+            last_token['score'] = (last_token['score'] + token['score']) / 2
         else:
-            # Start new entity
-            merged_tokens.append({
-                "word": token['word'].replace("##", ""),
-                "entity": token['entity'],
-                "entity_type": ent_type,
-                "start": token['start'],
-                "end": token['end'],
-                "score": token['score']
-            })
+            # Otherwise, add the token to the list
+            merged_tokens.append(token)
     return merged_tokens
 
 def ner(input_text):
-    output = get_completion(input_text)
-    if not isinstance(output, list):
-        raise ValueError(f"Unexpected model output: {output}")
-    
+    output = get_completion(input_text, parameters=None, ENDPOINT_URL=API_URL)
     merged_tokens = merge_tokens(output)
-    results = []
-    for ent in merged_tokens:
-        results.append((ent['word'], ent['entity_type']))
-    return results
+    
+    # Convert to format expected by gr.HighlightedText
+    # Format: {"text": str, "entities": [{"entity": label, "start": int, "end": int}]}
+    entities = []
+    for token in merged_tokens:
+        # Extract clean entity label (remove B- or I- prefix)
+        entity_label = token['entity'].replace('B-', '').replace('I-', '')
+        entities.append({
+            "entity": entity_label,
+            "start": token['start'],
+            "end": token['end']
+        })
+    
+    return {"text": input_text, "entities": entities}
 
 gr.close_all()
 demo = gr.Interface(
     fn=ner,
-    inputs=gr.Textbox(label="Text to find entities", lines=2),
-    outputs=gr.HighlightedText(label="Text with merged entities"),
+    inputs=[gr.Textbox(label="Text to find entities", lines=2)],
+    outputs=[gr.HighlightedText(label="Text with entities")],
     title="NER with dslim/bert-base-NER",
-    description="Find named entities using the `dslim/bert-base-NER` model via Hugging Face Inference API.",
+    description="Find entities using the `dslim/bert-base-NER` model under the hood!",
     allow_flagging="never",
     examples=[
-        " I work at DeepLearningAI and live in Chennai.",
-        
+        "My name is Andrew, I'm building DeeplearningAI and I live in California",
+        "My name is Poli, I live in Vienna and work at HuggingFace",
+        "My name is andrew, I work at DeepLearningAI and live in Chennai."
     ]
 )
-demo.launch(share=True, server_port=int(os.environ.get("PORT3", 7860)))
+demo.launch(share=True, server_port=int(os.environ['PORT4']))
 ```
 
 ### OUTPUT:
-<img width="1061" height="555" alt="image" src="https://github.com/user-attachments/assets/e6af01d7-046a-42b1-9a72-b2090d7be457" />
+
+<img width="915" height="494" alt="image" src="https://github.com/user-attachments/assets/584e6697-d07c-4422-b606-0f9d74ef59cf" />
+
 
 
 ### RESULT:
