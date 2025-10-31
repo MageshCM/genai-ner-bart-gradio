@@ -42,63 +42,86 @@ def get_completion(inputs, parameters=None, ENDPOINT_URL=API_URL):
     }
     data = {"inputs": inputs}
     if parameters:
-        data.update({"parameters": parameters})
-
-    response = requests.post(ENDPOINT_URL, headers=headers, data=json.dumps(data))
-    text = response.content.decode("utf-8").strip()
-
-    
+        data["parameters"] = parameters
+    response = requests.post(ENDPOINT_URL, headers=headers, json=data)
+    if response.status_code != 200:
+        raise ValueError(f"Model API returned {response.status_code} error: {response.text}")
+    text = response.text.strip()
+    # Try single valid JSON
     try:
-       
         return json.loads(text)
     except json.JSONDecodeError:
-        
-        parts = text.split("\n")
-        for part in parts:
+        # Try line-separated JSON chunks
+        for line in text.splitlines():
             try:
-                return json.loads(part)
+                return json.loads(line)
             except Exception:
                 continue
-        raise ValueError(f"Invalid JSON returned from model: {text}")
+        raise ValueError(f"Unable to parse model output: {text}")
 
 def merge_tokens(tokens):
     merged_tokens = []
     for token in tokens:
-        if merged_tokens and token['entity'].startswith('I-') and merged_tokens[-1]['entity'].endswith(token['entity'][2:]):
+        # Extract entity type without prefix
+        ent_type = token['entity'].replace("B-", "").replace("I-", "")
+        
+        # Check if this token continues the previous entity
+        if (merged_tokens and 
+            token['entity'].startswith("I-") and 
+            merged_tokens[-1]['entity_type'] == ent_type):
+            # Merge with previous token
             last = merged_tokens[-1]
-            last['word'] += token['word'].replace('##', '')
+            word = token['word']
+            # Handle subword tokens
+            if word.startswith("##"):
+                last['word'] += word[2:]
+            else:
+                # Add space before non-subword continuations
+                last['word'] += " " + word
             last['end'] = token['end']
             last['score'] = (last['score'] + token['score']) / 2
         else:
-            merged_tokens.append(token)
+            # Start new entity
+            merged_tokens.append({
+                "word": token['word'].replace("##", ""),
+                "entity": token['entity'],
+                "entity_type": ent_type,
+                "start": token['start'],
+                "end": token['end'],
+                "score": token['score']
+            })
     return merged_tokens
 
 def ner(input_text):
     output = get_completion(input_text)
     if not isinstance(output, list):
         raise ValueError(f"Unexpected model output: {output}")
+    
     merged_tokens = merge_tokens(output)
-    return {"text": input_text, "entities": merged_tokens}
+    results = []
+    for ent in merged_tokens:
+        results.append((ent['word'], ent['entity_type']))
+    return results
 
 gr.close_all()
 demo = gr.Interface(
     fn=ner,
-    inputs=[gr.Textbox(label="Text to find entities", lines=2)],
-    outputs=[gr.HighlightedText(label="Text with entities")],
+    inputs=gr.Textbox(label="Text to find entities", lines=2),
+    outputs=gr.HighlightedText(label="Text with merged entities"),
     title="NER with dslim/bert-base-NER",
     description="Find named entities using the `dslim/bert-base-NER` model via Hugging Face Inference API.",
     allow_flagging="never",
     examples=[
-        "My name is Magesh, I work at DeepLearningAI and live in Chennai.",
-        "Elan lives in Pondicherry and works at HuggingFace."
+        " I work at DeepLearningAI and live in Chennai.",
+        
     ]
 )
-
 demo.launch(share=True, server_port=int(os.environ.get("PORT3", 7860)))
 ```
 
 ### OUTPUT:
-<img width="1143" height="697" alt="image" src="https://github.com/user-attachments/assets/2fbcd935-f5c4-4788-abaf-028ee72950ab" />
+<img width="1061" height="555" alt="image" src="https://github.com/user-attachments/assets/e6af01d7-046a-42b1-9a72-b2090d7be457" />
+
 
 ### RESULT:
 
